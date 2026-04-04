@@ -105,6 +105,11 @@ int try_handle_npdrm_mailbox(uint64_t *regs, uint64_t lr)
         return 0;
     }
 #endif
+    METRIC_INC(npdrm_mailbox_total);
+    if(request_hdr.cmd == 5)
+        METRIC_INC(npdrm_cmd5);
+    else if(request_hdr.cmd == 6)
+        METRIC_INC(npdrm_cmd6);
 
     uint64_t rif_pa = request_hdr.rif_pa;
 
@@ -149,6 +154,7 @@ int try_handle_npdrm_mailbox(uint64_t *regs, uint64_t lr)
         return 1;
 #endif
     }
+    METRIC_INC(npdrm_debug_rif_matches);
 
 #ifdef NPDRM_PORTING
     // Now that we know the input data is a (debug) rif, we know we are at the right place
@@ -212,6 +218,7 @@ int try_handle_npdrm_mailbox(uint64_t *regs, uint64_t lr)
     }
 
     memcpy(DMEM + rif_pa + __builtin_offsetof(struct RifCmd56MemoryLayout, output), &layout.output, sizeof(layout.output));
+    METRIC_INC(npdrm_mailbox_emulated);
 
     uint32_t res = 0;
     if(copy_to_kernel(regs[RDX] + 0x4, &res, sizeof(res)))

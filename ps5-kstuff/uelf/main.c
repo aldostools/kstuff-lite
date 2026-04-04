@@ -14,6 +14,7 @@
 #include "fpkg.h"
 #include "syscall_fixes.h"
 #include "npdrm.h"
+#include "shared_area.h"
 
 int have_error_code;
 
@@ -40,6 +41,7 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
 #define IS(which) (IS_PPR(which) || IS_PS4(which))
     if(IS_PPR(getppid) && allow_kekcall)
     {
+        METRIC_INC(syscall_kekcall_dispatches);
         enum { KEKCALL_ARGS_OFFSET_MAX = syscall_rsp_to_regs_stash + 0x10 + 8 };
         uint8_t syscall_frame[KEKCALL_ARGS_OFFSET_MAX + sizeof(uint64_t) * NREGS];
         uint64_t args[NREGS] = {0};
@@ -69,16 +71,28 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
          || IS_PPR(mlock)
 #endif
     )
+    {
+        METRIC_INC(syscall_fself_dispatches);
         handle_fself_syscall(regs);
+    }
     else if(IS(nmount)
          || IS(unmount))
+    {
+        METRIC_INC(syscall_fpkg_dispatches);
         handle_fpkg_syscall(regs);
+    }
     else if(IS(ioctl)
          || IS_PPR(ioctl))
+    {
+        METRIC_INC(syscall_ioctl_dispatches);
         handle_ioctl_syscall(regs);
+    }
     else if(IS(mprotect)
          || IS_PPR(mdbg_call))
+    {
+        METRIC_INC(syscall_fix_dispatches);
         handle_syscall_fix(regs);
+    }
 #endif
 #undef IS
 #undef IS_PS4
@@ -87,8 +101,11 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
 
 void handle(uint64_t* regs)
 {
+    METRIC_INC(handle_entries);
     const int initial_from_user = !!(regs[CS] & 3);
     const int initial_from_copyio = !!(regs[EFLAGS] & 0x40000);
+    if(initial_from_user)
+        METRIC_INC(handle_from_userspace_entries);
     const uint64_t syscall_extra = (FWVER >= 0x1000 ? 0x10 : 0);
     if(!initial_from_user)
         regs[EFLAGS] |= 0x10000; //RF
@@ -162,6 +179,7 @@ from_userspace:
     }
     else if(regs[RIP] == (uint64_t)doreti_iret)
     {
+        METRIC_INC(handle_doreti_iret_entries);
         uint64_t frame[5];
         if(copy_from_kernel(frame, regs[RSP], 16))
             return;
@@ -189,36 +207,47 @@ from_userspace:
     else if(try_handle_mailbox_trap(regs))
         return;
     else if(try_handle_fself_trap(regs))
+    {
+        METRIC_INC(fself_traps);
         return;
+    }
     else if(try_handle_fpkg_trap(regs))
+    {
+        METRIC_INC(fpkg_traps);
         return;
+    }
     else if(try_handle_syscall_fix_trap(regs))
+    {
+        METRIC_INC(syscall_fix_traps);
         return;
+    }
 #endif
     else
     {
         int decrypted = 0;
-#define DECRYPT(which, idx) if((regs[which] >> 48) == 0xdeb7) { log_word(regs[RIP]); log_word(idx); regs[which] |= 0xffffull << 48; decrypted = 1; }
-        DECRYPT(RAX, 0)
-        DECRYPT(RCX, 1)
-        DECRYPT(RDX, 2)
-        DECRYPT(RBX, 3)
+#define DECRYPT(which, field) if((regs[which] >> 48) == 0xdeb7) { regs[which] |= 0xffffull << 48; decrypted = 1; METRIC_INC(debug_reg_decrypt_events); METRIC_INC(field); }
+        DECRYPT(RAX, debug_reg_decrypt_rax)
+        DECRYPT(RCX, debug_reg_decrypt_rcx)
+        DECRYPT(RDX, debug_reg_decrypt_rdx)
+        DECRYPT(RBX, debug_reg_decrypt_rbx)
         //DECRYPT(RSP, 4)
-        DECRYPT(RBP, 5)
-        DECRYPT(RSI, 6)
-        DECRYPT(RDI, 7)
-        DECRYPT(R8, 8)
-        DECRYPT(R9, 9)
-        DECRYPT(R10, 10)
-        DECRYPT(R11, 11)
-        DECRYPT(R12, 12)
-        DECRYPT(R13, 13)
-        DECRYPT(R14, 14)
-        DECRYPT(R15, 15)
+        DECRYPT(RBP, debug_reg_decrypt_rbp)
+        DECRYPT(RSI, debug_reg_decrypt_rsi)
+        DECRYPT(RDI, debug_reg_decrypt_rdi)
+        DECRYPT(R8, debug_reg_decrypt_r8)
+        DECRYPT(R9, debug_reg_decrypt_r9)
+        DECRYPT(R10, debug_reg_decrypt_r10)
+        DECRYPT(R11, debug_reg_decrypt_r11)
+        DECRYPT(R12, debug_reg_decrypt_r12)
+        DECRYPT(R13, debug_reg_decrypt_r13)
+        DECRYPT(R14, debug_reg_decrypt_r14)
+        DECRYPT(R15, debug_reg_decrypt_r15)
 #undef DECRYPT
         if(!decrypted)
         {
             //probably a debug trap that's not yet handled
+            METRIC_INC(debug_unhandled_traps);
+            log_msg("uelf: unhandled debug trap\n");
             log_word(regs[RIP]);
             log_word(16);
         }

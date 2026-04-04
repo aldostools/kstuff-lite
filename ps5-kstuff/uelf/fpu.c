@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "shared_area.h"
 
 __attribute__((aligned(64))) static char xsave_area[4096]; //is this enough?
 static uint32_t xsave_eax, xsave_edx;
@@ -9,10 +10,15 @@ static uint32_t fpu_state_saved;
 int uelf_fpu_enter(void)
 {
     if(fpu_depth++)
+    {
+        METRIC_INC(fpu_nested_enters);
         return 0;
+    }
+    METRIC_INC(fpu_enters);
     fpu_state_saved = 0;
     if(read_cr0_checked(&saved_cr0) || write_cr0_checked(saved_cr0 & -9)) //clear CR0.TS
     {
+        METRIC_INC(fpu_enter_failures);
         fpu_depth = 0;
         return 1;
     }

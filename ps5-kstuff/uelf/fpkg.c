@@ -152,6 +152,7 @@ static struct crypto_message_result handle_xts_message_run(uint64_t msg, const u
     uint8_t key[32];
     if(!get_fake_key(key_idx, key))
         return result;
+    METRIC_INC(xts_run_messages_total);
 
     uint64_t src = first_msg_data[2];
     uint64_t dst = first_msg_data[3];
@@ -169,7 +170,7 @@ static struct crypto_message_result handle_xts_message_run(uint64_t msg, const u
             break;
         uint32_t next_sectors = (uint32_t)next_msg_data[1];
         if(HANDLE_TO_IDX(next_msg_data[5]) != key_idx
-        || ((next_msg_data[0] & 0x800) >> 11) != is_encrypt
+        || (int)((next_msg_data[0] & 0x800) >> 11) != is_encrypt
         || next_msg_data[2] != src + ((uint64_t)total_sectors << 12)
         || next_msg_data[3] != dst + ((uint64_t)total_sectors << 12)
         || next_msg_data[4] != start_sector + total_sectors
@@ -190,6 +191,7 @@ static struct crypto_message_result handle_xts_message_run(uint64_t msg, const u
         skip_bytes = run_bytes;
     uint32_t skip_sectors = (uint32_t)(skip_bytes >> 12);
     *bytes_handled += run_bytes;
+    METRIC_ADD(xts_run_skip_sectors, skip_sectors);
 
     if(skip_sectors < total_sectors)
     {
@@ -204,6 +206,8 @@ static struct crypto_message_result handle_xts_message_run(uint64_t msg, const u
     }
 
     result.emulated_messages = result.total_messages;
+    if(result.total_messages > 1)
+        METRIC_ADD(xts_run_coalesced_messages, result.total_messages - 1);
     result.status = 0;
     return result;
 }
@@ -226,6 +230,7 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
     int handled = 0;
     int fpu_entered = 0;
     uint64_t new_bytes_handled = 0;
+    METRIC_INC(crypto_requests_total);
 
     uint64_t start = (FWVER >= 0x800) ? regs[RBX] : regs[R14];
 
@@ -239,6 +244,13 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
         }
 
         struct crypto_message_info msg_info = inspect_crypto_message(msg_data);
+        METRIC_INC(crypto_messages_total);
+        if(msg_info.kind == CRYPTO_MESSAGE_XTS)
+            METRIC_INC(crypto_messages_xts);
+        else if(msg_info.kind == CRYPTO_MESSAGE_HMAC)
+            METRIC_INC(crypto_messages_hmac);
+        else
+            METRIC_INC(crypto_messages_other);
         if(!fpu_entered && msg_info.kind != CRYPTO_MESSAGE_OTHER)
         {
             if(uelf_fpu_enter())
@@ -257,6 +269,7 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
 
         if (status == EINTR) // partial decrypt, need to restart the syscall
         {
+            METRIC_INC(crypto_requests_restarted);
             uint64_t frame[6] = {
                 MKTRAP(TRAP_FPKG, 2), 0, 0, 0, 0,
                 new_bytes_handled,
@@ -276,6 +289,7 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
         if (status != ENOSYS)
         {
             emulated += result.emulated_messages;
+            METRIC_ADD(crypto_emulated_messages, result.emulated_messages);
             if (status)
                 total_status = status;
         }
@@ -293,6 +307,9 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
 
         if(!crypto_request_emulated(regs, (FWVER >= 0x800) ? regs[RBX] : regs[R14], total_status))
             goto exit;
+        METRIC_INC(crypto_requests_emulated);
+        if(total_status)
+            METRIC_INC(crypto_requests_failed);
         // uint64_t end_time = rdtsc();
         /*log_word(0x1234);
         log_word(end_time - start_time);*/
@@ -300,6 +317,8 @@ static int handle_crypto_request(uint64_t* regs, uint64_t bytes_handled)
     }
 
 exit:
+    if(!handled)
+        METRIC_INC(crypto_requests_fallback);
     if(fpu_entered)
         uelf_fpu_exit();
     return handled;
@@ -324,6 +343,7 @@ int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
 {
     if(lr == (uint64_t)sceSblServiceMailbox_lr_verifySuperBlock)
     {
+        METRIC_INC(verify_superblock_mailbox);
         uint64_t req[8];
         if(copy_from_kernel(req, regs[RDX], 64))
             return 0;
@@ -352,6 +372,7 @@ int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
                     regs[RIP] = lr;
                     regs[RAX] = 0;
                     regs[RSP] += 8;
+                    METRIC_INC(verify_superblock_emulated);
                 }
                 else
                     unregister_fake_key(key1);
@@ -361,6 +382,7 @@ int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
     else if(lr == (uint64_t)sceSblServiceMailbox_lr_sceSblPfsClearKey_1
          || lr == (uint64_t)sceSblServiceMailbox_lr_sceSblPfsClearKey_2)
     {
+        METRIC_INC(clear_key_mailbox);
         uint32_t handle;
         if(copy_from_kernel(&handle, regs[RDX]+8, sizeof(handle)))
             return 0;
@@ -375,6 +397,7 @@ int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
             regs[RIP] = lr;
             regs[RAX] = 0;
             regs[RSP] += 8;
+            METRIC_INC(clear_key_emulated);
         }
     }
     /*else

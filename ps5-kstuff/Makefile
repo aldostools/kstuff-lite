@@ -2,11 +2,21 @@ PROSPER0GDB_OPT ?= -O0
 PAYLOAD_OPT ?= -O0
 UELF_OPT ?= -O3
 UELF_ARCH ?= -march=znver2 -mtune=znver2
+KSTUFF_OBS ?= 0
 
-all: payload.bin
+ALL_TARGETS := payload.bin
+
+ifeq ($(KSTUFF_OBS),1)
+ifndef PS5_PAYLOAD_SDK
+$(error PS5_PAYLOAD_SDK is undefined)
+endif
+ALL_TARGETS += debug-reader.bin
+endif
+
+all: $(ALL_TARGETS)
 
 clean:
-	rm -f payload.elf payload.bin  freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/uelf.bin uelf/crt.o
+	rm -f payload.elf payload.bin debug-reader.elf debug-reader.bin freebsd-loader kelf kelf.o structs.h structs.inc uelf/uelf uelf/uelf.bin uelf/crt.o
 
 ../lib/lib-elf-ps5.a:
 	cd ../lib; $(MAKE)
@@ -18,7 +28,7 @@ structs.inc: structs-ps5.inc
 	cp structs-ps5.inc structs.inc
 
 payload.elf: ../lib/lib-elf-ps5.a ../prosper0gdb/prosper0gdb.o main.c kelf uelf/uelf.bin
-	gcc $(PAYLOAD_OPT) -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib-elf-ps5.a ../prosper0gdb/prosper0gdb.o $(EXTRA_CFLAGS) main.c -DPS5KEK ../prosper0gdb/dbg.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding -no-pie -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384
+	gcc $(PAYLOAD_OPT) -isystem ../freebsd-headers -nostdinc -nostdlib -fno-stack-protector -static ../lib/lib-elf-ps5.a ../prosper0gdb/prosper0gdb.o $(EXTRA_CFLAGS) -DKSTUFF_OBS=$(KSTUFF_OBS) main.c -DPS5KEK ../prosper0gdb/dbg.c -Wl,-gc-sections -o payload.elf -fPIE -ffreestanding -no-pie -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384
 
 payloa%.bin: payloa%.elf
 	objcopy $< --only-section .text --only-section .data --only-section .bss --only-section .rodata -O binary $@
@@ -37,10 +47,18 @@ uelf/crt.o: uelf/crt.asm
 	yasm uelf/crt.asm -f elf64 -o uelf/crt.o
 
 uelf/uelf: uelf/*.c uelf/*.h structs.h uelf/crt.o BearSSL/build/libbearssl.a isa-l_crypto/bin/isa-l_crypto.a
-	gcc -Wl,-Bsymbolic -Wl,-gc-sections -ffunction-sections -fdata-sections $(UELF_OPT) $(UELF_ARCH) -g -isystem ../freebsd-headers -isystem isa-l_crypto/include -nostdinc -nostdlib -mgeneral-regs-only -fno-stack-protector -fPIE -fPIC -shared -fvisibility=hidden -ffreestanding uelf/crt.o $(EXTRA_CFLAGS) uelf/*.c BearSSL/build/libbearssl.a isa-l_crypto/bin/isa-l_crypto.a -o uelf/uelf -Wl,-z,max-page-size=4096
+	gcc -Wl,-Bsymbolic -Wl,-gc-sections -ffunction-sections -fdata-sections $(UELF_OPT) $(UELF_ARCH) -g -isystem ../freebsd-headers -isystem isa-l_crypto/include -nostdinc -nostdlib -mgeneral-regs-only -fno-stack-protector -fPIE -fPIC -shared -fvisibility=hidden -ffreestanding uelf/crt.o $(EXTRA_CFLAGS) -DKSTUFF_OBS=$(KSTUFF_OBS) uelf/*.c BearSSL/build/libbearssl.a isa-l_crypto/bin/isa-l_crypto.a -o uelf/uelf -Wl,-z,max-page-size=4096
 
 uelf/uelf.bin: uelf/uelf
 	objcopy --strip-all $< $@
+
+ifeq ($(KSTUFF_OBS),1)
+debug-reader.elf: debug-reader.c uelf/shared_area.h debug-reader.mk
+	$(MAKE) -f debug-reader.mk $@ PS5_PAYLOAD_SDK="$(PS5_PAYLOAD_SDK)"
+
+debug-reader.bin: debug-reader.elf debug-reader.mk
+	$(MAKE) -f debug-reader.mk $@ PS5_PAYLOAD_SDK="$(PS5_PAYLOAD_SDK)"
+endif
 
 BearSSL/build/libbearssl.a: build_bearssl.sh overrides.h
 	bash build_bearssl.sh

@@ -54,10 +54,28 @@ if [ -z "${PS5_PAYLOAD_SDK:-}" ] || [ ! -d "$PS5_PAYLOAD_SDK" ]; then
     exit 1
 fi
 
+kstuff_obs="${KSTUFF_OBS:-0}"
+case "$kstuff_obs" in
+    0|1)
+        ;;
+    *)
+        printf 'error: KSTUFF_OBS must be 0 or 1, got %s\n' "$kstuff_obs" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$kstuff_obs" = 1 ]; then
+    printf 'Building ps5-kstuff with observability enabled.\n' >&2
+    kstuff_make_args=(KSTUFF_OBS=1 payload.bin debug-reader.elf debug-reader.bin)
+else
+    printf 'Building standard ps5-kstuff payload.\n' >&2
+    kstuff_make_args=(KSTUFF_OBS=0)
+fi
+
 make -C lib clean
 make -C prosper0gdb clean
 make -C ps5-kstuff clean
 make -C ps5-kstuff-ldr clean
 
-make -C ps5-kstuff
-make -C ps5-kstuff-ldr
+make -C ps5-kstuff "${kstuff_make_args[@]}"
+make -C ps5-kstuff-ldr KSTUFF_OBS="$kstuff_obs"

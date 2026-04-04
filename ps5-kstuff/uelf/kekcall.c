@@ -6,6 +6,7 @@
 #include "kekcall.h"
 #include "traps.h"
 #include "utils.h"
+#include "log.h"
 
 extern char syscall_after[];
 extern char doreti_iret[];
@@ -71,6 +72,20 @@ int handle_kekcall(uint64_t* regs, uint64_t* args, uint32_t nr)
         regs[RSI] = regs[RSP] + 64;
         regs[RDX] = 48;
         regs[RIP] = (uint64_t)copyin;
+    }
+    else if(nr == 6)
+    {
+#if KSTUFF_OBS
+        int err = copy_shared_area_snapshot(args[RDI], args[RSI]);
+        if(!err)
+        {
+            args[RAX] = 0;
+            METRIC_INC(shared_area_snapshots);
+        }
+        return err;
+#else
+        return ENOSYS;
+#endif
     }
    else if(nr == 0xffffffff)
     {

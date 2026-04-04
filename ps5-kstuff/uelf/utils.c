@@ -7,17 +7,20 @@
 
 int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit)
 {
+    METRIC_INC(virt2phys_calls);
     uint64_t pml = cr3_phys;
     for(int i = 39; i >= 12; i -= 9)
     {
         if(pml >= ((1ull << 39) - (1ull << 12))) //dmem mapping size
         {
+            METRIC_INC(virt2phys_failures);
             log_word(0xdead0000dead0000);
             return 0;
         }
         uint64_t next_pml = *(uint64_t*)(DMEM + pml + ((addr & (0x1ffull << i)) >> (i - 3)));
         if(!(next_pml & 1))
         {
+            METRIC_INC(virt2phys_failures);
             log_word(0xdeaddeaddeaddead);
             log_word((uint64_t)__builtin_return_address(0));
             return 0;
@@ -38,10 +41,14 @@ int copy_from_kernel(void* dst, uint64_t src, uint64_t sz)
 {
     char* p_dst = dst;
     uint64_t phys, phys_end;
+    uint64_t total = sz;
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, total);
     while(sz)
     {
         if(!virt2phys(src, &phys, &phys_end))
         {
+            METRIC_INC(copy_from_failures);
             log_word((uint64_t)__builtin_return_address(0));
             return EFAULT;
         }
@@ -60,10 +67,14 @@ int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz)
 {
     const char* p_src = src;
     uint64_t phys, phys_end;
+    uint64_t total = sz;
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, total);
     while(sz)
     {
         if(!virt2phys(dst, &phys, &phys_end))
         {
+            METRIC_INC(copy_to_failures);
             log_word((uint64_t)__builtin_return_address(0));
             return EFAULT;
         }

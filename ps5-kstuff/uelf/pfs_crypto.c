@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "pfs_crypto.h"
+#include "shared_area.h"
 #include "utils.h"
 #include "fpu.h"
 
@@ -132,9 +133,11 @@ static int get_hmac_sha256_cache_entry(struct crypto_request_cache* cache, int k
     struct hmac_sha256_cache_entry* entry = select_hmac_sha256_cache_entry(cache, key_id, key);
     if(hmac_sha256_cache_entry_matches(entry, key_id, key))
     {
+        METRIC_INC(hmac_cache_hits);
         *out = entry;
         return 0;
     }
+    METRIC_INC(hmac_cache_misses);
 
     struct hmac_sha256_cache_entry temp = {.key_id = key_id};
     memcpy(temp.key, key, sizeof(temp.key));
@@ -154,8 +157,12 @@ static int pfs_gen_key(uint32_t idx, const uint8_t* seed, const uint8_t* ekpfs, 
 
 int pfs_derive_fake_keys(const uint8_t* p_eekpfs, const uint8_t* crypt_seed, uint8_t* ek, uint8_t* sk)
 {
+    METRIC_INC(pfs_derive_calls);
     if(uelf_fpu_enter())
+    {
+        METRIC_INC(pfs_derive_failures);
         return 0;
+    }
     int ans = 0;
     uint8_t eekpfs[256];
     memcpy(eekpfs, p_eekpfs, 256);
@@ -176,6 +183,10 @@ int pfs_derive_fake_keys(const uint8_t* p_eekpfs, const uint8_t* crypt_seed, uin
     ans = 1;
 exit:
     uelf_fpu_exit();
+    if(ans)
+        METRIC_INC(pfs_derive_successes);
+    else
+        METRIC_INC(pfs_derive_failures);
     return ans;
 }
 
@@ -185,6 +196,8 @@ int pfs_hmac_virtual_fpu_held(struct crypto_request_cache* cache, uint8_t* out, 
     struct virt2phys_local_cache data_cache = {0};
     struct uelf_sha256_context ctx;
     const struct hmac_sha256_cache_entry* hmac_keys;
+    METRIC_INC(hmac_requests);
+    METRIC_ADD(hmac_bytes, data_size);
     if(get_hmac_sha256_cache_entry(cache, key_id, key, &hmac_keys))
         return -1;
     ctx = hmac_keys->inner_ctx;
@@ -252,9 +265,11 @@ static int get_xts_key_cache_entry(struct crypto_request_cache* cache, int key_i
     struct xts_key_cache_entry* entry = select_xts_key_cache_entry(cache, key_id, key);
     if(xts_key_cache_entry_matches(entry, key_id, key))
     {
+        METRIC_INC(xts_cache_hits);
         *out = entry;
         return 0;
     }
+    METRIC_INC(xts_cache_misses);
 
     struct xts_key_cache_entry temp = {.key_id = key_id};
     memcpy(temp.key, key, sizeof(temp.key));
@@ -278,6 +293,8 @@ int pfs_xts_virtual_fpu_held(struct crypto_request_cache* cache, uint64_t dst, u
     const struct xts_key_cache_entry* xts_keys;
     struct virt2phys_local_cache src_cache = {0};
     struct virt2phys_local_cache dst_cache = {0};
+    METRIC_INC(xts_requests);
+    METRIC_ADD(xts_sectors, count);
     if(get_xts_key_cache_entry(cache, key_id, key, &xts_keys))
         return -1;
     while(count)
@@ -294,6 +311,8 @@ int pfs_xts_virtual_fpu_held(struct crypto_request_cache* cache, uint64_t dst, u
                 run = src_span;
             if(run > dst_span)
                 run = dst_span;
+            METRIC_INC(xts_full_direct_runs);
+            METRIC_ADD(xts_full_direct_sectors, run);
             while(run--)
             {
                 uint64_t tweak[2] = {start, 0};
@@ -315,6 +334,7 @@ int pfs_xts_virtual_fpu_held(struct crypto_request_cache* cache, uint64_t dst, u
         }
 
         uint64_t tweak[2] = {start, 0};
+        METRIC_INC(xts_full_fallback_sectors);
         if(copy_from_kernel(sector, src, SECTOR_SIZE))
             return -1;
         if(is_encrypt) {

@@ -31,3 +31,5 @@ refs/*
 /ps5-kstuff/uelf/crt.o
 /ps5-kstuff/uelf/uelf
 /ps5-kstuff/uelf/uelf.bin
+/ps5-kstuff/debug-reader.bin
+/ps5-kstuff/debug-reader.elf
