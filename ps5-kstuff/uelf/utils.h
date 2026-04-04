@@ -16,6 +16,12 @@ extern char dmem[];
 int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit);
 int copy_from_kernel(void* dst, uint64_t src, uint64_t sz);
 int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz);
+int copy_u16_from_kernel(uint16_t* dst, uint64_t src);
+int copy_u32_from_kernel(uint32_t* dst, uint64_t src);
+int copy_u64_from_kernel(uint64_t* dst, uint64_t src);
+int copy_u16_to_kernel(uint64_t dst, uint16_t value);
+int copy_u32_to_kernel(uint64_t dst, uint32_t value);
+int copy_u64_to_kernel(uint64_t dst, uint64_t value);
 int run_gadget_checked(uint64_t* regs);
 int read_dbgregs_checked(uint64_t* dr);
 int write_dbgregs_checked(const uint64_t* dr);
@@ -50,7 +56,7 @@ static inline uint64_t uelf_rdtsc(void)
 
 static inline int kpeek64_checked(uintptr_t kptr, uint64_t* value)
 {
-    return copy_from_kernel(value, kptr, sizeof(*value));
+    return copy_u64_from_kernel(value, kptr);
 }
 
 static inline uint64_t kpeek64(uintptr_t kptr)
@@ -63,7 +69,7 @@ static inline uint64_t kpeek64(uintptr_t kptr)
 
 static inline void kpoke64(uintptr_t kptr, uint64_t value)
 {
-    copy_to_kernel(kptr, &value, sizeof(value));
+    copy_u64_to_kernel(kptr, value);
 }
 
 static inline int push_stack_checked(uint64_t* regs, const void* data, size_t sz)
@@ -146,12 +152,12 @@ static inline int set_pcb_dbregs_checked(void)
         return 1;
     if(kpeek64_checked(p_pcb_flags, &flags))
         return 1;
-    return copy_to_kernel(p_pcb_flags, &(const uint64_t){flags | PCB_DBREGS}, sizeof(uint64_t));
+    return copy_u64_to_kernel(p_pcb_flags, flags | PCB_DBREGS);
 }
 
 static inline int set_pcb_dbregs_checked_at(uint64_t p_pcb_flags, uint64_t flags)
 {
-    return copy_to_kernel(p_pcb_flags, &(const uint64_t){flags | PCB_DBREGS}, sizeof(uint64_t));
+    return copy_u64_to_kernel(p_pcb_flags, flags | PCB_DBREGS);
 }
 
 static inline int clear_pcb_dbregs_checked(void)
@@ -162,12 +168,12 @@ static inline int clear_pcb_dbregs_checked(void)
         return 1;
     if(kpeek64_checked(p_pcb_flags, &flags))
         return 1;
-    return copy_to_kernel(p_pcb_flags, &(const uint64_t){flags & ~PCB_DBREGS}, sizeof(uint64_t));
+    return copy_u64_to_kernel(p_pcb_flags, flags & ~PCB_DBREGS);
 }
 
 static inline int clear_pcb_dbregs_checked_at(uint64_t p_pcb_flags, uint64_t flags)
 {
-    return copy_to_kernel(p_pcb_flags, &(const uint64_t){flags & ~PCB_DBREGS}, sizeof(uint64_t));
+    return copy_u64_to_kernel(p_pcb_flags, flags & ~PCB_DBREGS);
 }
 
 static inline int restore_dbgregs_state_checked(const uint64_t* dr, int had_dbregs)

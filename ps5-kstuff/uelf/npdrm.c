@@ -248,7 +248,7 @@ int try_handle_npdrm_mailbox(uint64_t *regs, uint64_t lr)
     observe_current_syscall_emulated();
 
     uint32_t res = 0;
-    if(copy_to_kernel(regs[RDX] + 0x4, &res, sizeof(res)))
+    if(copy_u32_to_kernel(regs[RDX] + 0x4, res))
     {
         uelf_fpu_exit();
         METRIC_INC(npdrm_reject_copy_out_fail);

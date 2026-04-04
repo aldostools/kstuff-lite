@@ -392,7 +392,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
         uint64_t ctx_data[8];
         uint64_t self_header;
         uint32_t size;
-        if(copy_from_kernel(&size, regs[RDX]+16, 4))
+        if(copy_u32_from_kernel(&size, regs[RDX] + 16))
             RETURN_FSELF_MAILBOX(0);
         if(kpeek64_checked(self_context + 56, &self_header))
             RETURN_FSELF_MAILBOX(0);
@@ -422,7 +422,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
         if(copy_to_kernel(self_header, mini_header, mini_syscore_header_size))
             RETURN_FSELF_MAILBOX(0);
         size = mini_syscore_header_size;
-        if(copy_to_kernel(regs[RDX]+16, &size, 4))
+        if(copy_u32_to_kernel(regs[RDX] + 16, size))
         {
             copy_to_kernel(self_header, fself_header_backup+48, mini_syscore_header_size);
             RETURN_FSELF_MAILBOX(0);
@@ -430,7 +430,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
         if(push_stack_checked(regs, fself_header_backup, sizeof(fself_header_backup)))
         {
             copy_to_kernel(self_header, fself_header_backup+48, mini_syscore_header_size);
-            copy_to_kernel(regs[RDX]+16, &original_size, 4);
+            copy_u32_to_kernel(regs[RDX] + 16, original_size);
             RETURN_FSELF_MAILBOX(0);
         }
         METRIC_INC(fself_mailbox_verify_header_emulated);
@@ -536,11 +536,11 @@ int try_handle_fself_trap(uint64_t* regs)
                 else
                     p_authinfo = s_auth_info_for_exec;
             }
-            if(copy_from_kernel(&ret_addr, regs[RSP], sizeof(ret_addr)))
+            if(copy_u64_from_kernel(&ret_addr, regs[RSP]))
                 RETURN_FSELF_TRAP(1);
             if(copy_to_kernel(regs[R8], p_authinfo, 0x88))
                 RETURN_FSELF_TRAP(1);
-            if(copy_to_kernel(regs[RDI] + 62, &(const uint16_t[1]){0xdeb7}, 2))
+            if(copy_u16_to_kernel(regs[RDI] + 62, 0xdeb7))
                 RETURN_FSELF_TRAP(1);
             regs[RSP] += 8;
             regs[RIP] = ret_addr;

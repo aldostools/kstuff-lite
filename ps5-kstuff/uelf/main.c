@@ -373,7 +373,7 @@ from_userspace:
         {
             if(from_user)
             {
-                if(copy_from_kernel(&stack, (uint64_t)tss+4, 8))
+                if(copy_u64_from_kernel(&stack, (uint64_t)tss + 4))
                     RETURN_HANDLE();
             }
             else
@@ -406,7 +406,7 @@ from_userspace:
         uint64_t syscall_target;
         regs[RAX] |= 0xffffull << 48;
         regs[RSI] = regs[RSP] + syscall_rsp_to_rsi + syscall_extra;
-        if(copy_from_kernel(&syscall_target, regs[RAX]+8, sizeof(syscall_target)))
+        if(copy_u64_from_kernel(&syscall_target, regs[RAX] + 8))
             RETURN_HANDLE();
         if(push_stack_checked(regs, (const uint64_t[1]){(uint64_t)syscall_after}, 8))
             RETURN_HANDLE();

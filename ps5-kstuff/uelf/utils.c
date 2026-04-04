@@ -5,6 +5,44 @@
 #include "structs.h"
 #include "traps.h"
 
+static int copy_from_kernel_raw(void* dst, uint64_t src, uint64_t sz)
+{
+    char* p_dst = dst;
+    while(sz)
+    {
+        uint64_t phys, phys_end;
+        if(!virt2phys(src, &phys, &phys_end))
+            return EFAULT;
+        size_t chk = phys_end - phys;
+        if(sz < chk)
+            chk = sz;
+        memcpy(p_dst, DMEM + phys, chk);
+        p_dst += chk;
+        src += chk;
+        sz -= chk;
+    }
+    return 0;
+}
+
+static int copy_to_kernel_raw(uint64_t dst, const void* src, uint64_t sz)
+{
+    const char* p_src = src;
+    while(sz)
+    {
+        uint64_t phys, phys_end;
+        if(!virt2phys(dst, &phys, &phys_end))
+            return EFAULT;
+        size_t chk = phys_end - phys;
+        if(sz < chk)
+            chk = sz;
+        memcpy(DMEM + phys, p_src, chk);
+        dst += chk;
+        p_src += chk;
+        sz -= chk;
+    }
+    return 0;
+}
+
 int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit)
 {
     METRIC_TIME_START(start_cycles);
@@ -46,27 +84,34 @@ int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit)
 int copy_from_kernel(void* dst, uint64_t src, uint64_t sz)
 {
     METRIC_TIME_START(start_cycles);
-    char* p_dst = dst;
-    uint64_t phys, phys_end;
     uint64_t total = sz;
     METRIC_INC(copy_from_calls);
     METRIC_ADD(copy_from_bytes, total);
-    while(sz)
+    if(!sz)
     {
-        if(!virt2phys(src, &phys, &phys_end))
-        {
-            METRIC_INC(copy_from_failures);
-            log_word((uint64_t)__builtin_return_address(0));
-            METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
-            return EFAULT;
-        }
-        size_t chk = phys_end - phys;
-        if(sz < chk)
-            chk = sz;
-        memcpy(p_dst, DMEM+phys, chk);
-        p_dst += chk;
-        src += chk;
-        sz -= chk;
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return 0;
+    }
+    uint64_t phys, phys_end;
+    if(!virt2phys(src, &phys, &phys_end))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sz)
+    {
+        memcpy(dst, DMEM + phys, sz);
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return 0;
+    }
+    if(copy_from_kernel_raw(dst, src, sz))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
     }
     METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
     return 0;
@@ -75,27 +120,190 @@ int copy_from_kernel(void* dst, uint64_t src, uint64_t sz)
 int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz)
 {
     METRIC_TIME_START(start_cycles);
-    const char* p_src = src;
-    uint64_t phys, phys_end;
     uint64_t total = sz;
     METRIC_INC(copy_to_calls);
     METRIC_ADD(copy_to_bytes, total);
-    while(sz)
+    if(!sz)
     {
-        if(!virt2phys(dst, &phys, &phys_end))
-        {
-            METRIC_INC(copy_to_failures);
-            log_word((uint64_t)__builtin_return_address(0));
-            METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
-            return EFAULT;
-        }
-        size_t chk = phys_end - phys;
-        if(sz < chk)
-            chk = sz;
-        memcpy(DMEM+phys, p_src, chk);
-        dst += chk;
-        p_src += chk;
-        sz -= chk;
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return 0;
+    }
+    uint64_t phys, phys_end;
+    if(!virt2phys(dst, &phys, &phys_end))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sz)
+    {
+        memcpy(DMEM + phys, src, sz);
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return 0;
+    }
+    if(copy_to_kernel_raw(dst, src, sz))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    return 0;
+}
+
+int copy_u16_from_kernel(uint16_t* dst, uint64_t src)
+{
+    METRIC_TIME_START(start_cycles);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, sizeof(*dst));
+    uint64_t phys, phys_end;
+    if(!virt2phys(src, &phys, &phys_end))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sizeof(*dst))
+        memcpy(dst, DMEM + phys, sizeof(*dst));
+    else if(copy_from_kernel_raw(dst, src, sizeof(*dst)))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    return 0;
+}
+
+int copy_u32_from_kernel(uint32_t* dst, uint64_t src)
+{
+    METRIC_TIME_START(start_cycles);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, sizeof(*dst));
+    uint64_t phys, phys_end;
+    if(!virt2phys(src, &phys, &phys_end))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sizeof(*dst))
+        memcpy(dst, DMEM + phys, sizeof(*dst));
+    else if(copy_from_kernel_raw(dst, src, sizeof(*dst)))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    return 0;
+}
+
+int copy_u64_from_kernel(uint64_t* dst, uint64_t src)
+{
+    METRIC_TIME_START(start_cycles);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, sizeof(*dst));
+    uint64_t phys, phys_end;
+    if(!virt2phys(src, &phys, &phys_end))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sizeof(*dst))
+        memcpy(dst, DMEM + phys, sizeof(*dst));
+    else if(copy_from_kernel_raw(dst, src, sizeof(*dst)))
+    {
+        METRIC_INC(copy_from_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    return 0;
+}
+
+int copy_u16_to_kernel(uint64_t dst, uint16_t value)
+{
+    METRIC_TIME_START(start_cycles);
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, sizeof(value));
+    uint64_t phys, phys_end;
+    if(!virt2phys(dst, &phys, &phys_end))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sizeof(value))
+        memcpy(DMEM + phys, &value, sizeof(value));
+    else if(copy_to_kernel_raw(dst, &value, sizeof(value)))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    return 0;
+}
+
+int copy_u32_to_kernel(uint64_t dst, uint32_t value)
+{
+    METRIC_TIME_START(start_cycles);
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, sizeof(value));
+    uint64_t phys, phys_end;
+    if(!virt2phys(dst, &phys, &phys_end))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sizeof(value))
+        memcpy(DMEM + phys, &value, sizeof(value));
+    else if(copy_to_kernel_raw(dst, &value, sizeof(value)))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    return 0;
+}
+
+int copy_u64_to_kernel(uint64_t dst, uint64_t value)
+{
+    METRIC_TIME_START(start_cycles);
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, sizeof(value));
+    uint64_t phys, phys_end;
+    if(!virt2phys(dst, &phys, &phys_end))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
+    }
+    if(phys_end - phys >= sizeof(value))
+        memcpy(DMEM + phys, &value, sizeof(value));
+    else if(copy_to_kernel_raw(dst, &value, sizeof(value)))
+    {
+        METRIC_INC(copy_to_failures);
+        log_word((uint64_t)__builtin_return_address(0));
+        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        return EFAULT;
     }
     METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
     return 0;

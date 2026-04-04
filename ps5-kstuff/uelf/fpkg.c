@@ -409,7 +409,7 @@ int try_handle_fpkg_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(clear_key_mailbox);
         uint32_t handle;
-        if(copy_from_kernel(&handle, regs[RDX]+8, sizeof(handle)))
+        if(copy_u32_from_kernel(&handle, regs[RDX] + 8))
             return 0;
 
         int key = HANDLE_TO_IDX(handle);
