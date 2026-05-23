@@ -336,9 +336,11 @@ static uint8_t classify_npdrm_ioctl(uint64_t com)
     case 0x00000000c0044512ULL:
     case 0x00000000c00c5a02ULL:
     case 0x00000000c0108102ULL:
+    case 0x00000000c01c8f07ULL:
     case 0x00000000c02066a5ULL:
     case 0x00000000c0288907ULL:
     case 0x00000000c0288908ULL:
+    case 0x00000000c028ab00ULL:
     case 0x00000000c030ab00ULL:
     case 0x00000000c0484851ULL:
         return NPDRM_EXPECT_CMD5 | NPDRM_EXPECT_CMD6;
